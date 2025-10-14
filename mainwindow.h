@@ -34,6 +34,8 @@ class MainWindow
         bool _showDemoWindow = false;
         bool _showMetricsWindow = false;
         bool _showEvaluationResults = false;
+        bool _windows_initialized = false;
+        bool _force_parse = false;
         char _input_buffer[4096] = {0};
         char _forget_buffer[4096] = {0};
         char _text_buffer[8192] = {0};
@@ -48,9 +50,9 @@ class MainWindow
 
         ImFont *_math_font = nullptr;
 
-        bool checkFileExists(const std::string &path);
+        static bool checkFileExists(const std::string &path);
 
-        std::string findFont(const std::string &fontName);
+        static std::string findFont(const std::string &fontName);
 
         void EvaluationWindow();
 

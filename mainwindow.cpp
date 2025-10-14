@@ -7,7 +7,8 @@
 #include <iostream>
 #include <cstring>
 #include <fstream>
-#include <list>
+#include <string_view>
+#include "IconsFontAwesome6.h"
 
 #include "imgui_internal.h"
 
@@ -19,16 +20,16 @@ MainWindow::~MainWindow() = default;
 
 bool MainWindow::checkFileExists(const std::string &path)
 {
-    std::ifstream file(path);
+    const std::ifstream file(path);
     return file.good();
 }
 
 std::string MainWindow::findFont(const std::string &fontName)
 {
-    std::vector<std::string> possible_paths = {
+    const std::vector<std::string> possible_paths = {
         "fonts/" + fontName,
         "../fonts/" + fontName,
-        "../../misc/fonts/" + fontName,
+        "imgui/misc/fonts/" + fontName,
         "/usr/share/fonts/truetype/dejavu/" + fontName,
         "/System/Library/Fonts/" + fontName, // macOS
         "C:/Windows/Fonts/" + fontName, // Windows
@@ -74,71 +75,68 @@ bool MainWindow::init()
         0
     };
 
+    static constexpr ImWchar icon_ranges[] = {ICON_MIN_FA, ICON_MAX_FA, 0};
+
     ImFontConfig config;
     config.OversampleH = 2;
     config.OversampleV = 2;
     config.PixelSnapH = true;
     config.RasterizerMultiply = 1.0f;
+    config.MergeMode = false;
 
     std::cout << "Setting up fonts..." << std::endl;
-
-    std::vector<std::string> font_candidates = {
-        "STIXTwoMath-Regular.otf", // mathematical font
-        "NotoSansMath-Regular.ttf", // fallback
-        "DejaVuSans.ttf", // system font
-        "arial.ttf", // Windows fallback
-        "Liberation-Sans.ttf", // Linux fallback
-    };
-
-    _math_font = nullptr;
-
-    for (const auto &font_name: font_candidates)
+    std::string primary_font = findFont("DejaVuSans.ttf");
+    if (!primary_font.empty())
     {
-        std::string font_path = findFont(font_name);
-        if (!font_path.empty())
-        {
-            _math_font = io.Fonts->AddFontFromFileTTF(font_path.c_str(), 16.0f, &config, math_ranges);
-            if (_math_font)
-            {
-                std::cout << "Successfully loaded math font: " << font_path << std::endl;
-                break;
-            } else
-            {
-                std::cout << "Failed to load font: " << font_path << std::endl;
-            }
-        }
+        _math_font = io.Fonts->AddFontFromFileTTF(primary_font.c_str(), 16.0f, &config, math_ranges);
+        std::cout << "Loaded primary font: " << primary_font << std::endl;
+    } else
+    {
+        _math_font = io.Fonts->AddFontDefault();
+        std::cout << "Using default ImGui font" << std::endl;
     }
 
-    // Fallback to default
-    if (!_math_font)
+    config.MergeMode = true;
+    config.GlyphMinAdvanceX = 13.0f; // Make icons monospaced
+
+    std::string icon_font = findFont("Font Awesome 6 Free-Solid-900.otf");
+    if (!icon_font.empty())
     {
-        std::cout << "Using default ImGui font" << std::endl;
-        _math_font = io.Fonts->AddFontDefault();
-        config.MergeMode = true;
-        for (const auto &font_name: font_candidates)
+        ImFont *icon_result = io.Fonts->AddFontFromFileTTF(
+            icon_font.c_str(),
+            13.0f,
+            &config,
+            icon_ranges
+        );
+
+        if (icon_result)
         {
-            std::string font_path = findFont(font_name);
-            if (!font_path.empty())
-            {
-                ImFont *merged = io.Fonts->AddFontFromFileTTF(font_path.c_str(), 16.0f, &config, math_ranges);
-                if (merged)
-                {
-                    std::cout << "Merged additional symbols from: " << font_path << std::endl;
-                    break;
-                }
-            }
+            std::cout << "Successfully merged Font Awesome icons" << std::endl;
+        } else
+        {
+            std::cout << "Failed to merge Font Awesome icons" << std::endl;
         }
+    } else
+    {
+        std::cout << "Font Awesome not found - icons will not be available" << std::endl;
+    }
+
+    config.MergeMode = true;
+    std::string math_font = findFont("STIXTwoMath-Regular.otf");
+    if (!math_font.empty())
+    {
+        io.Fonts->AddFontFromFileTTF(math_font.c_str(), 16.0f, &config, math_ranges);
+        std::cout << "Merged math font: " << math_font << std::endl;
     }
 
     // Build font atlas
-    bool font_built = io.Fonts->Build();
-    if (!font_built)
+    if (!io.Fonts->Build())
     {
-        std::cout << "✗ Font atlas build failed" << std::endl;
+        std::cout << "Font atlas build failed" << std::endl;
         return false;
     }
 
-    std::cout << "✓ Font atlas built successfully" << std::endl;
+    std::cout << "Font atlas built successfully" << std::endl;
     std::cout << "Total fonts loaded: " << io.Fonts->Fonts.Size << std::endl;
 
     formula::initializeMaps();
@@ -146,122 +144,163 @@ bool MainWindow::init()
     return true;
 }
 
+static bool show_hint = false;
+
 void MainWindow::render()
 {
+    if (!_windows_initialized)
+    {
+        SetNextWindowPos(ImVec2(9, 10));
+        SetNextWindowSize(ImVec2(343, 294));
+    }
     FormulaInputWindow();
-
-    InputHintWindow();
-
+    if (show_hint)
+        InputHintWindow();
+    if (!_windows_initialized)
+    {
+        SetNextWindowPos(ImVec2(356, 8));
+        SetNextWindowSize(ImVec2(914, 296));
+    }
     EvaluationWindow();
-
-    //TestWindow();
-
+    if (!_windows_initialized)
+    {
+        SetNextWindowPos(ImVec2(582, 312));
+        SetNextWindowSize(ImVec2(687, 479));
+    }
     FormulaListWindow();
-
+    if (!_windows_initialized)
+    {
+        SetNextWindowPos(ImVec2(10, 313));
+        SetNextWindowSize(ImVec2(569, 477));
+    }
     ForgetWindow();
+    _windows_initialized = true;
 }
 
 void MainWindow::FormulaInputWindow()
 {
-    const auto *activeFormula = _activeFormulaIdx >= 0 ? &_formulas[_activeFormulaIdx] : 0;
-    Begin("Formula Input & Analysis");
+    const auto *activeFormula = _activeFormulaIdx >= 0 ? &_formulas[_activeFormulaIdx] : nullptr;
 
-    Text("Input Formula:");
-    InputTextMultiline("##input", _input_buffer, sizeof(_input_buffer),
-                       ImVec2(-1, 100));
 
-    if (Button("Parse Formula") || (IsItemFocused() && IsKeyPressed(ImGuiKey_Enter)))
+    if (!Begin("Formula Input & Analysis"))
     {
-        _showEvaluationResults = false;
-        if (strlen(_input_buffer) > 0)
+        End();
+        return;
+    }
+
+    if (BeginChild("InputSection", ImVec2(0, 150), true))
+    {
+        Text("Input Formula:");
+        SameLine();
+        auto cur = GetCursorScreenPos();
+        SetCursorScreenPos({cur.x + GetContentRegionAvail().x - CalcTextSize("W").x, cur.y});
+        if (Selectable(ICON_FA_CIRCLE_INFO))
+            show_hint ^= true;
+
+        InputTextMultiline("##input", _input_buffer, sizeof(_input_buffer), ImVec2(-1, 80));
+
+        if (Button(ICON_FA_CHECK " Parse Formula",
+                   ImVec2(GetContentRegionAvail().x - CalcTextSize("W Clear").x - GetStyle().ItemSpacing.x * 2, 0)) || (
+                IsItemFocused() && IsKeyPressed(ImGuiKey_Enter)) || _force_parse)
         {
-            try
+            _showEvaluationResults = false;
+            if (strlen(_input_buffer) > 0)
             {
-                // parse formula
-                _formulas.emplace_back(_input_buffer);
-                _activeFormulaIdx = _formulas.size() - 1;
-                activeFormula = &_formulas[_activeFormulaIdx];
-                if (_evaluations.capacity() < _formulas.size())
-                    _evaluations.resize(_formulas.size());
-                if (activeFormula->isValid())
+                try
                 {
-                    strncpy(_text_buffer, "Valid formula!", sizeof(_text_buffer));
-                    strncpy(_unicode_buffer, activeFormula->getUnicodeRepresentation().c_str(),
-                            sizeof(_unicode_buffer));
-                } else
+                    if (!_force_parse)
+                    {
+                        _formulas.emplace_back(_input_buffer);
+                        _activeFormulaIdx = _formulas.size() - 1;
+                        activeFormula = &_formulas[_activeFormulaIdx];
+                        if (_evaluations.capacity() < _formulas.size())
+                            _evaluations.resize(_formulas.size());
+                    }
+                    _force_parse = false;
+                    if (activeFormula->isValid())
+                    {
+                        printf("Formula valid");
+                        strncpy(_text_buffer, "Valid formula!", sizeof(_text_buffer));
+                        strncpy(_unicode_buffer, activeFormula->getUnicodeRepresentation().c_str(),
+                                sizeof(_unicode_buffer));
+			_text_buffer[sizeof(_text_buffer) - 1] = '\0';
+			_unicode_buffer[sizeof(_unicode_buffer) - 1] = '\0';
+                    } else
+                    {
+                        printf("Formula invalid");
+                        strncpy(_text_buffer, activeFormula->getInvalidReason().c_str(), sizeof(_text_buffer));
+                        strncpy(_unicode_buffer, activeFormula->getUnicodeRepresentation().c_str(),
+                                sizeof(_unicode_buffer));
+			_text_buffer[sizeof(_text_buffer) - 1] = '\0';
+			_unicode_buffer[sizeof(_unicode_buffer) - 1] = '\0';
+                    }
+                } catch (const std::exception &e)
                 {
-                    strncpy(_text_buffer, activeFormula->getInvalidReason().c_str(),
-                            sizeof(_text_buffer));
-                    //_unicode_buffer[0] = '\0';
-                    strncpy(_unicode_buffer, activeFormula->getUnicodeRepresentation().c_str(),
-                            sizeof(_unicode_buffer));
-                }
-            } catch (const std::exception &e)
-            {
-                snprintf(_text_buffer, sizeof(_text_buffer), "Error: %s", e.what());
-                _unicode_buffer[0] = '\0';
-            }
-        }
-    }
-
-    SameLine();
-    if (Button("Clear"))
-    {
-        _input_buffer[0] = '\0';
-        _text_buffer[0] = '\0';
-        _unicode_buffer[0] = '\0';
-    }
-
-    Separator();
-
-    if (strlen(_text_buffer) > 0 && activeFormula)
-    {
-        if (activeFormula->isValid())
-        {
-            TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "%s", _text_buffer);
-        } else
-        {
-            TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "%s", _text_buffer);
-        }
-    }
-
-    if (strlen(_unicode_buffer) > 0)
-    {
-        Text("Unicode Representation:");
-        if (_math_font)
-            PushFont(_math_font);
-
-        const std::string unicode_str(_unicode_buffer);
-
-        if (unicode_str.find("∧") != std::string::npos)
-        {
-            TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "%s", unicode_str.c_str());
-        } else
-        {
-            Text("%s", unicode_str.c_str());
-        }
-
-        if (_math_font)
-            PopFont();
-    }
-    if (activeFormula)
-    {
-        if (const auto vars = activeFormula->getSignature(); !vars.empty())
-        {
-            Text("Variables found (%zu):", vars.size());
-            for (size_t i = 0; i < vars.size(); ++i)
-            {
-                if (i > 0)
-                    SameLine();
-                TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "%s", vars[i].c_str());
-                if (i < vars.size() - 1)
-                {
-                    SameLine();
-                    Text(",");
+                    snprintf(_text_buffer, sizeof(_text_buffer), "Error: %s", e.what());
+		    _text_buffer[sizeof(_text_buffer) - 1] = '\0';
+		    _unicode_buffer[0] = '\0';
                 }
             }
         }
+        SameLine();
+        if (Button(ICON_FA_TRASH " Clear"))
+        {
+            _input_buffer[0] = '\0';
+            _text_buffer[0] = '\0';
+            _unicode_buffer[0] = '\0';
+        }
     }
+    EndChild();
+
+    if (BeginChild("AnalysisSection", ImVec2(0, 0), false))
+    {
+        const bool has_formula = strlen(_text_buffer) > 0 && activeFormula;
+        if (has_formula)
+        {
+            if (activeFormula->isValid())
+                TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), ICON_FA_CHECK " %s", _text_buffer);
+            else
+                TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), ICON_FA_XMARK " %s", _text_buffer);
+        }
+
+        if (strlen(_unicode_buffer) > 0)
+        {
+            Text("Unicode Representation:");
+            if (_math_font)
+                PushFont(_math_font);
+
+            const std::string unicode_str(_unicode_buffer);
+            TextWrapped("%s", unicode_str.c_str());
+
+            if (_math_font)
+                PopFont();
+        }
+
+        if (has_formula)
+        {
+            if (const auto vars = activeFormula->getSignature(); !vars.empty())
+            {
+                Separator();
+                Text("Variables (%zu):", vars.size());
+                SameLine();
+
+                PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
+                for (size_t i = 0; i < vars.size(); ++i)
+                {
+                    if (i > 0)
+                    {
+                        SameLine();
+                        Text(",");
+                    }
+                    SameLine();
+                    Text("%s", vars[i].c_str());
+                }
+                PopStyleColor();
+            }
+        }
+    }
+    EndChild();
+
     End();
 }
 
@@ -276,6 +315,14 @@ void MainWindow::InputHintWindow()
     Text("XOR: 'xor', '^'");
     Text("logical TRUE: 'true', 'T', 'top', 'tau', 'tautology'");
     Text("logical FALSE: 'false', 'F', 'top', 'con', 'contradiction'");
+    Separator();
+    auto cur = GetCursorScreenPos();
+    auto center = GetContentRegionAvail().x * 0.5f;
+    auto btn_wdt = CalcTextSize("Close").x + GetStyle().ItemSpacing.x;
+    ImVec2 pos(cur.x + center - btn_wdt * 0.5f, cur.y);
+    SetCursorScreenPos(pos);
+    if (Button("Close"))
+        show_hint = false;
     End();
 }
 
@@ -284,111 +331,10 @@ void MainWindow::TestWindow()
     if (Begin("Tests"))
     {
         if (Button("test!"))
-            test = true;
+            test = !test;
         if (test)
         {
-            // std::vector<std::string> a;
-            //
-            // a.resize(5);
-            // a[1] = "eins";
-            // a[3] = "drei";
-            // for (size_t i = 0; i < a.size(); i++)
-            // {
-            //     Text(a[i].c_str());
-            // }
-            // Separator();
-            // Text("a size: %d", a.size());
-            // Text("a capactiy: %d", a.capacity());
-            // a.resize(20);
-            // Separator();
-            // a[10] = "zehn";
-            // a[15] = "fünfzehn";
-            // Text("nach resize");
-            // for (size_t i = 0; i < a.size(); i++)
-            // {
-            //     Text(a[i].c_str());
-            // }
-            // Text("a size: %d", a.size());
-            // Text("a capactiy: %d", a.capacity());
-
-            /*
-            auto testF = formula("(a or b)->c");
-            std::vector<std::string> vars;
-            vars.emplace_back("a");
-            auto testF2 = testF.forgetTrim(vars);
-            Text(testF.getUnicodeRepresentation().c_str());
-            Separator();
-            Text(testF2.getUnicodeRepresentation().c_str());
-            */
-            //Separator();
-            /*
-            std::list<std::string> aaaa;
-            aaaa.emplace_back("1");
-            aaaa.emplace_back("2");
-            aaaa.emplace_back("3");
-            aaaa.emplace_back("4");
-            aaaa.emplace_back("5");
-            std::list<std::string>::iterator two = aaaa.begin();
-            std::advance(two, 1);
-            std::list<std::string>::iterator four = two;
-            std::advance(four, 2);
-            aaaa.insert(four, "a");
-            Text("two: ");
-            SameLine();
-            Text(two->c_str());
-            Text("four: ");
-            SameLine();
-            Text(four->c_str());
-            Text("End: ");
-            SameLine();
-            Text(std::prev(aaaa.end())->c_str());
-            for (auto &e :aaaa)
-            {
-                Text(e.c_str());
-            }
-            */
-            //Separator();
-            /*
-            std::list<std::string> tokens;
-            tokens.emplace_back("FALSE");
-            tokens.emplace_back("OR");
-            tokens.emplace_back("NOT");
-            tokens.emplace_back("(");
-            tokens.emplace_back("a");
-            tokens.emplace_back("XOR");
-            tokens.emplace_back("b");
-            tokens.emplace_back(")");
-
-            auto it = tokens.begin();
-            auto op = std::next(tokens.begin());
-            auto end = std::prev(tokens.end());
-
-            while (it!=tokens.end())
-            {
-                Text(it++ -> c_str());
-                if (it!=tokens.end())SameLine();
-            }
-            Separator();
-            tokens.insert(std::next(op), "(");
-            tokens.insert(std::next(op), "NOT");
-            tokens.insert(std::next(end), ")");
-            tokens.erase(std::prev(op), std::next(op));
-
-            it = tokens.begin();
-            while (it!=tokens.end())
-            {
-                Text(it++ -> c_str());
-                if (it!=tokens.end())SameLine();
-            }
-            */
-            //Separator();
-            std::list<std::string> tests;
-            tests.push_back("(");
-            tests.push_back("a");
-            tests.push_back(")");
-            auto start = tests.begin();
-            std::advance(start, -2);
-            Text(start->c_str());
+            Text("no tests here");
         }
     }
     End();
@@ -396,193 +342,320 @@ void MainWindow::TestWindow()
 
 void MainWindow::FormulaListWindow()
 {
-    if (Begin("Formula List"))
+    if (!Begin("Formula List"))
     {
-        if (_formulas.empty())
-        {
-            Text("No formulas yet. Add one with the text input!");
-            End();
-            return;
-        }
+        End();
+        return;
+    }
+
+    if (_formulas.empty())
+    {
+        TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), ICON_FA_INBOX " No formulas yet");
+        Text("Add one with the text input!");
+        End();
+        return;
+    }
+
+    if (Button(ICON_FA_TRASH " Clear All"))
+    {
+        _formulas.clear();
+        _evaluations.clear();
+        _activeFormulaIdx = -1;
+    }
+    SameLine();
+    Text("(%zu formulas)", _formulas.size());
+
+    Separator();
+
+    std::vector<size_t> to_delete;
+
+    if (BeginTable("FormulaTable", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV))
+    {
+        TableSetupColumn("Formula", ImGuiTableColumnFlags_WidthStretch);
+        TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, 40);
 
         for (size_t i = 0; i < _formulas.size(); i++)
         {
             const auto &formula = _formulas[i];
-            Spacing();
-            Separator();
-            Spacing();
-            char buffer[512];
-            snprintf(buffer, sizeof(buffer), "(%lld) %s\n%s\n\t",
-                     i,
-                     formula.getOriginal().c_str(),
-                     formula.getUnicodeRepresentation().c_str());
-            const ImVec2 cursor_pos = GetCursorScreenPos();
-            if (Selectable(buffer, i == static_cast<size_t>(_activeFormulaIdx)))
+            bool is_selected = (i == static_cast<size_t>(_activeFormulaIdx));
+
+            PushID(i);
+
+            TableNextRow();
+            TableNextColumn();
+
+            char label[1024];
+            if (_math_font)
+                PushFont(_math_font);
+            snprintf(label, sizeof(label), "[%zu] %s", i, formula.getUnicodeRepresentation().c_str());
+            if (_math_font)
+                PopFont();
+
+            if (Selectable(label, is_selected, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap))
             {
                 _activeFormulaIdx = i;
                 if (_formulas.capacity() > _evaluations.size())
                     _evaluations.resize(_formulas.capacity());
                 if (_evaluations[_activeFormulaIdx].empty())
                     _showEvaluationResults = false;
-                //TODO hier
+
                 auto og = _formulas[_activeFormulaIdx].getOriginal();
-                strncpy(_input_buffer, og.c_str(), size(og));
+                strncpy(_input_buffer, og.c_str(), std::min(sizeof(_input_buffer) - 1, og.size()));
+                _input_buffer[og.size()] = '\0';
+                _force_parse = true;
             }
-            SetCursorScreenPos(ImVec2(cursor_pos.x,
-                                      cursor_pos.y + GetTextLineHeight() * 2));
+
+            SetCursorPosX(GetCursorPosX() + 10);
             if (formula.isValid())
-                TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Valid Formula");
-            else
-                TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "%s",
-                            formula.getInvalidReason().c_str());
+            {
+                TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), ICON_FA_CHECK);
+                SameLine();
+                TextDisabled("Valid | Vars: %zu", formula.getSignature().size());
+            } else
+            {
+                TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), ICON_FA_XMARK);
+                SameLine();
+                TextDisabled("Invalid");
+            }
+
+            TableNextColumn();
+
+            if (SmallButton(ICON_FA_TRASH))
+            {
+                to_delete.push_back(i);
+            }
+
+            PopID();
         }
+
+        EndTable();
     }
+
+    for (auto it = to_delete.rbegin(); it != to_delete.rend(); ++it)
+    {
+        size_t idx = *it;
+        _formulas.erase(_formulas.begin() + idx);
+
+        if (_activeFormulaIdx == static_cast<int>(idx))
+            _activeFormulaIdx = -1;
+        else if (_activeFormulaIdx > static_cast<int>(idx))
+            _activeFormulaIdx--;
+    }
+
     End();
 }
 
 void MainWindow::ForgetWindow()
 {
+    if (!Begin("Forget operations and cleanup"))
+    {
+        End();
+        return;
+    }
+
     auto *activeFormula = _activeFormulaIdx >= 0 ? &_formulas[_activeFormulaIdx] : 0;
 
-    if (Begin("Forget operations and cleanup"))
+    if (activeFormula && activeFormula->isValid())
     {
-        Text("Enter variables to be forgotten from selected formula (comma-seperated list):");
-        InputTextMultiline("##forget", _forget_buffer, sizeof(_forget_buffer));
-        if (!activeFormula)
-            Text("Add a formula to use forget operations");
-        else
+        auto vars = activeFormula->getSignature();
+        if (!vars.empty())
         {
-            if (Button("Cleanup Formula"))
+            Text("Available variables:");
+            SameLine();
+            PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 1.0f, 0.6f, 1.0f));
+            for (size_t i = 0; i < vars.size(); i++)
             {
-                _formulas.push_back(activeFormula->cleanup());
+                if (i > 0)
+                {
+                    SameLine();
+                    Text(",");
+                    SameLine();
+                }
+                if (SmallButton(vars[i].c_str()))
+                {
+                    if (strlen(_forget_buffer) > 0)
+                        strcat(_forget_buffer, ", ");
+                    strcat(_forget_buffer, vars[i].c_str());
+                }
             }
-            if (Button("Classic Forget"))
-            {
-                const std::vector<std::string> vars = forgetVars(_forget_buffer);
-                _formulas.push_back(activeFormula->forgetClassic(vars, false));
-            }
-            if (Button("Skeptical Forget"))
-            {
-                const std::vector<std::string> vars = forgetVars(_forget_buffer);
-                _formulas.push_back(activeFormula->forgetClassic(vars, true));
-            }
-            if (Button("Replace with true"))
-            {
-                const std::vector<std::string> vars = forgetVars(_forget_buffer);
-                _formulas.push_back(activeFormula->forgetSubstitute(vars, true));
-            }
-            if (Button("Replace with false"))
-            {
-                const std::vector<std::string> vars = forgetVars(_forget_buffer);
-                _formulas.push_back(activeFormula->forgetSubstitute(vars, false));
-            }
-            if (Button("Local irrelevance assumption"))
-            {
-                const std::vector<std::string> vars = forgetVars(_forget_buffer);
-                _formulas.push_back(activeFormula->forgetTrim(vars));
-            }
-            if (Button("Recursive Classic forget"))
-            {
-                const std::vector<std::string> vars = forgetVars(_forget_buffer);
-                _formulas.push_back(activeFormula->forgetClassicRec(vars));
-            }
+            PopStyleColor();
+            Separator();
         }
     }
+
+    Text("Variables to forget:");
+    SetNextItemWidth(-1);
+    InputTextMultiline("##forget", _forget_buffer, sizeof(_forget_buffer), ImVec2(-1, 60));
+
+    if (!activeFormula || !activeFormula->isValid())
+    {
+        Spacing();
+        TextColored(ImVec4(1.0f, 0.7f, 0.0f, 1.0f), ICON_FA_TRIANGLE_EXCLAMATION" Select a valid formula first");
+        End();
+        return;
+    }
+
+    const std::vector<std::string> vars = forgetVars(_forget_buffer);
+
+    Separator();
+
+    static int selected_operation = 0;
+    const char *operations[] = {
+        "Cleanup Formula",
+        "Classic Forget",
+        "Skeptical Forget",
+        "Recursive Classic Forget",
+        "Replace with True",
+        "Replace with False",
+        "Local Irrelevance Assumption"
+    };
+
+    Text("Select operation:");
+    SetNextItemWidth(GetContentRegionAvail().x - CalcTextSize("Execute Operation").x - GetStyle().ItemSpacing.x * 2);
+    Combo("##operation", &selected_operation, operations, IM_ARRAYSIZE(operations));
+    SameLine();
+    if (Button("Execute Operation"))
+    {
+        switch (selected_operation)
+        {
+            case 0:
+                _formulas.push_back(activeFormula->cleanup());
+                break;
+            case 1:
+                _formulas.push_back(activeFormula->forgetClassic(vars, false));
+                break;
+            case 2:
+                _formulas.push_back(activeFormula->forgetClassic(vars, true));
+                break;
+            case 3:
+                _formulas.push_back(activeFormula->forgetClassicRec(vars));
+                break;
+            case 4:
+                _formulas.push_back(activeFormula->forgetSubstitute(vars, true));
+                break;
+            case 5:
+                _formulas.push_back(activeFormula->forgetSubstitute(vars, false));
+                break;
+            case 6:
+                _formulas.push_back(activeFormula->forgetTrim(vars));
+                break;
+        }
+    }
+
     End();
 }
 
 void MainWindow::EvaluationWindow()
 {
     auto *formula = _activeFormulaIdx >= 0 ? &_formulas[_activeFormulaIdx] : 0;
-    if (Begin("Evaluation results - Truth Table"))
+
+    if (!Begin("Evaluation results - Truth Table"))
     {
-        if (Button("Show full truth table"))
-            _showEvaluationResults = true;
+        End();
+        return;
+    }
 
-        if (_showEvaluationResults)
+    if (!formula)
+    {
+        TextColored(ImVec4(1.0f, 0.7f, 0.0f, 1.0f), ICON_FA_TRIANGLE_EXCLAMATION " No formula selected");
+        End();
+        return;
+    }
+
+    if (!formula->isValid())
+    {
+        TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), ICON_FA_XMARK " Formula is not valid");
+        End();
+        return;
+    }
+
+    if (Button(_showEvaluationResults ? ICON_FA_EYE_SLASH " Hide Truth Table" : ICON_FA_EYE " Show Truth Table"))
+        _showEvaluationResults = !_showEvaluationResults;
+
+    if (_showEvaluationResults)
+    {
+        if (_formulas.capacity() > _evaluations.size())
+            _evaluations.resize(_formulas.capacity());
+
+        _evaluations[_activeFormulaIdx] = formula->getFullEvaluationResults();
+
+        if (std::map<std::vector<bool>, bool> *eval = &_evaluations[_activeFormulaIdx]; !eval->empty())
         {
-            if (!formula)
-            {
-                Text("No Formula!");
-                End();
-                return;
-            }
+            auto it = eval->rbegin();
+            const std::vector vars = formula->getSignature();
 
-            if (!formula->isValid())
+            Separator();
+
+            int true_count = 0;
+            for (const auto &[key, val]: *eval)
+                if (val)
+                    true_count++;
+
+            Text("Models: %d / %d (%.1f%%)", true_count, (int) eval->size(),
+                 100.0f * true_count / eval->size());
+
+            Separator();
+
+            if (const int columns = vars.size() + 1; BeginTable("Truth Table", columns,
+                                                                ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                                                                ImGuiTableFlags_ScrollY))
             {
-                Text("No valid Formula!");
-                End();
-                return;
-            }
-            if (_formulas.capacity() > _evaluations.size())
-                _evaluations.resize(_formulas.capacity());
-            _evaluations[_activeFormulaIdx] = formula->getFullEvaluationResults();
-            if (std::map<std::vector<bool>, bool> *eval = &_evaluations[_activeFormulaIdx]; eval->empty())
-            {
-                Text("No evaluation results!");
-                End();
-                return;
-            } else
-            {
-                auto it = eval->rbegin();
-                const std::vector vars = formula->getSignature();
-                //+1 damit das ergebnis auch rein kann
-                if (const int columns = vars.size() + 1; BeginTable("Truth Table", columns))
+                TableSetupScrollFreeze(0, 1);
+                for (size_t i = 0; i < vars.size(); i++)
                 {
+                    TableSetupColumn(vars[i].c_str());
+                }
+                TableSetupColumn("Result");
+                TableHeadersRow();
+
+                while (it != eval->rend())
+                {
+                    TableNextRow();
                     for (size_t i = 0; i < vars.size(); i++)
                     {
                         TableNextColumn();
-                        Text(vars[i].c_str());
+                        TextColored(it->first[i] ? ImVec4(0.0f, 1.0f, 0.0f, 1.0f) : ImVec4(0.5f, 0.5f, 0.5f, 1.0f),
+                                    it->first[i] ? "1" : "0");
                     }
                     TableNextColumn();
-                    Text("Result");
-                    while (it != eval->rend())
-                    {
-                        for (size_t i = 0; i < vars.size(); i++)
-                        {
-                            TableNextColumn();
-                            if (it->first[i])
-                                Text("1");
-                            else
-                                Text("0");
-                        }
-                        TableNextColumn();
-                        if (it->second)
-                            Text("1");
-                        else
-                            Text("0");
-                        ++it;
-                    }
-                    EndTable();
+                    TextColored(it->second ? ImVec4(0.0f, 1.0f, 0.0f, 1.0f) : ImVec4(1.0f, 0.0f, 0.0f, 1.0f),
+                                it->second ? "1" : "0");
+                    ++it;
                 }
+                EndTable();
             }
         }
     }
+
     End();
 }
 
 std::vector<std::string> MainWindow::forgetVars(const char *str)
 {
-    //HELP, das geht bestimmt saubererer oder
-    std::vector<std::string> output;
-    std::string buffer;
-
-    for (size_t i = 0; i < strlen(str); i++)
+  std::vector<std::string> output;
+  std::string_view input(str);
+  
+  size_t start = 0;
+  size_t pos = 0;
+  
+  while (pos <= input.length())
     {
-        if (str[i] == ',')
+      if (pos == input.length() || input[pos] == ',')
         {
-            output.push_back(buffer);
-            buffer.clear();
-        } else
-        {
-            buffer += str[i];
+	  std::string_view token = input.substr(start, pos - start);
+	  size_t first = token.find_first_not_of(" \t\n\r");
+	  if (first != std::string_view::npos)
+	    {
+	      size_t last = token.find_last_not_of(" \t\n\r");
+	      token = token.substr(first, last - first + 1);
+	      output.emplace_back(token);
+            }
+	  start = pos + 1;
         }
+        pos++;
     }
-    if (!buffer.empty())
-        output.push_back(buffer);
-    return output;
+  return output;
 }
-
 
 void MainWindow::shutdown()
 {
